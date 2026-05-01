@@ -28,3 +28,6 @@ steps:
 
 images:
   - 'europe-west1-docker.pkg.dev/aesthetic-diagnosis/aesthetic-diagnosis/search'
+
+options:
+  defaultLogsBucketBehavior: REGIONAL_USER_OWNED_BUCKET
