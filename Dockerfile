@@ -6,7 +6,6 @@ COPY requirements-search.txt .
 RUN pip install --no-cache-dir -r requirements-search.txt
 
 COPY search.py .
-COPY credentials.yaml .
 
 EXPOSE 8080
 
