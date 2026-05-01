@@ -1,0 +1,30 @@
+steps:
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'build'
+      - '-t'
+      - 'europe-west1-docker.pkg.dev/aesthetic-diagnosis/aesthetic-diagnosis/search:$COMMIT_SHA'
+      - '-t'
+      - 'europe-west1-docker.pkg.dev/aesthetic-diagnosis/aesthetic-diagnosis/search:latest'
+      - '.'
+
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'push'
+      - '--all-tags'
+      - 'europe-west1-docker.pkg.dev/aesthetic-diagnosis/aesthetic-diagnosis/search'
+
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: gcloud
+    args:
+      - 'run'
+      - 'deploy'
+      - 'aesthetic-diagnosis-search'
+      - '--image=europe-west1-docker.pkg.dev/aesthetic-diagnosis/aesthetic-diagnosis/search:$COMMIT_SHA'
+      - '--region=europe-west1'
+      - '--platform=managed'
+      - '--allow-unauthenticated'
+      - '--set-secrets=PINECONE_API_KEY=PINECONE_API_KEY:latest,PINECONE_INDEX_HOST=PINECONE_INDEX_HOST:latest,OPENAI_API_KEY=OPENAI_API_KEY:latest,/run/secrets/CREDENTIALS_YAML=CREDENTIALS_YAML:latest'
+
+images:
+  - 'europe-west1-docker.pkg.dev/aesthetic-diagnosis/aesthetic-diagnosis/search'

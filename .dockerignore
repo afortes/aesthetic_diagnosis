@@ -1,0 +1,13 @@
+fuentes/
+material_curso/
+.env
+.ingested.json
+Pipfile
+Pipfile.lock
+add_sources.py
+create_index.py
+__pycache__/
+*.pyc
+*.json
+*.m4a
+*.mp4

@@ -1,0 +1,24 @@
+# Claves y configuración sensible
+.env
+credentials.yaml
+
+# Datos e índices
+fuentes/
+material_curso/
+fuentes/.ingested.json
+
+# Cache de transcripciones
+*.json
+*.txt
+!requirements-search.txt
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+
+# Pipenv
+.venv
+
+# Docker

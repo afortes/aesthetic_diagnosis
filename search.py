@@ -12,7 +12,9 @@ load_dotenv()
 st.set_page_config(page_title="Mi Buscador RAG", page_icon="🔍", layout="centered")
 
 # --- 2. AUTENTICACIÓN ---
-with open("credentials.yaml") as f:
+# En Cloud Run, credentials.yaml se monta como secreto en /run/secrets/CREDENTIALS_YAML
+credentials_path = "/run/secrets/CREDENTIALS_YAML" if os.path.exists("/run/secrets/CREDENTIALS_YAML") else "credentials.yaml"
+with open(credentials_path) as f:
     config = yaml.safe_load(f)
 
 authenticator = stauth.Authenticate(
