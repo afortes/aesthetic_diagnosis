@@ -1,5 +1,6 @@
 import os
 import yaml
+from datetime import datetime, timedelta
 import streamlit as st
 import streamlit_authenticator as stauth
 from dotenv import load_dotenv
@@ -24,11 +25,35 @@ authenticator = stauth.Authenticate(
     config["cookie"]["expiry_days"],
 )
 
+MAX_LOGIN_ATTEMPTS = 5
+LOCKOUT_MINUTES = 15
+
+if "login_attempts" not in st.session_state:
+    st.session_state.login_attempts = 0
+if "lockout_until" not in st.session_state:
+    st.session_state.lockout_until = None
+
+if st.session_state.lockout_until:
+    remaining = (st.session_state.lockout_until - datetime.now()).total_seconds()
+    if remaining > 0:
+        mins, secs = int(remaining // 60), int(remaining % 60)
+        st.error(f"Demasiados intentos fallidos. Inténtalo de nuevo en {mins}m {secs}s.")
+        st.stop()
+    else:
+        st.session_state.lockout_until = None
+        st.session_state.login_attempts = 0
+
 authenticator.login()
 
 if not st.session_state.get("authentication_status"):
     if st.session_state.get("authentication_status") is False:
-        st.error("Usuario o contraseña incorrectos.")
+        st.session_state.login_attempts += 1
+        left = MAX_LOGIN_ATTEMPTS - st.session_state.login_attempts
+        if left <= 0:
+            st.session_state.lockout_until = datetime.now() + timedelta(minutes=LOCKOUT_MINUTES)
+            st.error(f"Demasiados intentos fallidos. Acceso bloqueado por {LOCKOUT_MINUTES} minutos.")
+        else:
+            st.error(f"Usuario o contraseña incorrectos. Intentos restantes: {left}.")
     st.stop()
 
 authenticator.logout("Cerrar sesión", "sidebar")
