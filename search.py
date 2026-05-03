@@ -6,7 +6,7 @@ import streamlit_authenticator as stauth
 from dotenv import load_dotenv
 from pinecone import Pinecone
 from openai import OpenAI
-from langfuse import Langfuse
+from langfuse import observe, get_client, propagate_attributes
 
 load_dotenv()
 
@@ -68,88 +68,55 @@ pc = Pinecone(api_key=os.environ["PINECONE_API_KEY"])
 index = pc.Index(host=os.environ["PINECONE_INDEX_HOST"])
 client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
 
-if "langfuse" not in st.session_state:
-    st.session_state.langfuse = Langfuse()
-langfuse = st.session_state.langfuse
 
-
-# --- 3. GESTIÓN DEL HISTORIAL DE CHAT ---
-if "messages" not in st.session_state:
-    st.session_state.messages = []
-
-# Dibujar los mensajes guardados en la pantalla
-for message in st.session_state.messages:
-    with st.chat_message(message["role"]):
-        st.markdown(message["content"])
-
-# --- 4. LÓGICA DE BÚSQUEDA Y RESPUESTA ---
-# Esta caja de texto se queda fija en la parte inferior
-user_query = st.chat_input("Escribe tu pregunta aquí (ej. Explícame qué es Dr. Baumann)...")
-
-if user_query:
-    trace = langfuse.trace(
-        name="rag-query",
-        input=user_query,
-        user_id=st.session_state.get("name", "anonymous"),
-        session_id=st.session_state.get("username", "unknown"),
+# --- FUNCIONES INSTRUMENTADAS CON LANGFUSE ---
+@observe(name="pinecone-search")
+def search_pinecone(query):
+    results = index.search(
+        namespace="example-namespace",
+        query={"inputs": {"text": query}, "top_k": 4},
+        fields=["category", "chunk_text", "source_file", "slide_number", "start_time"]
     )
+    hits = results.get("result", {}).get("hits", [])
+    get_client().update_current_span(output={"hit_count": len(hits)})
+    return hits
 
-    # Mostrar la pregunta del usuario en la interfaz y guardarla en el historial
-    with st.chat_message("user"):
-        st.markdown(user_query)
-    st.session_state.messages.append({"role": "user", "content": user_query})
 
-    # Preparar el contenedor para la respuesta del asistente
-    with st.chat_message("assistant"):
-        with st.spinner("Buscando en la base de conocimiento..."):
-            
-            # 4.1 Búsqueda en Pinecone (Solicitando también los metadatos que creamos)
-            pinecone_span = trace.span(
-                name="pinecone-search",
-                input={"query": user_query, "namespace": "example-namespace", "top_k": 4},
-            )
-            results = index.search(
-                namespace="example-namespace",
-                query={
-                    "inputs": {"text": user_query},
-                    "top_k": 4
-                },
-                fields=["category", "chunk_text", "source_file", "slide_number", "start_time"]
-            )
-            hits = results.get("result", {}).get("hits", [])
-            pinecone_span.end(output={"hit_count": len(hits)})
-            
-            if not hits:
-                st.warning("No he encontrado información relevante en mis documentos para responder a esto.")
-                st.stop()
+@observe(name="openai-completion")
+def generate_answer(messages):
+    response = client.chat.completions.create(model="gpt-4o-mini", messages=messages)
+    answer = response.choices[0].message.content
+    get_client().update_current_generation(
+        output=answer,
+        usage_details={"input": response.usage.prompt_tokens, "output": response.usage.completion_tokens},
+    )
+    return answer
 
-            # 4.2 Ensamblar el contexto y formatear las fuentes
-            context = ""
-            fuentes_visuales = []
-            
-            for i, h in enumerate(hits):
-                fields = h.get("fields", {})
-                texto = fields.get("chunk_text", "").strip()
-                categoria = fields.get("category", "general")
-                archivo = fields.get("source_file", "Documento desconocido")
-                
-                # Añadimos el texto al contexto que leerá el LLM
-                context += f"--- Fragmento {i+1} ---\n{texto}\n\n"
-                
-                # Formateamos la fuente visualmente para el usuario según el tipo de archivo
-                if categoria == "presentacion":
-                    diapo = int(fields.get("slide_number", 0))
-                    fuentes_visuales.append(f"📄 **{archivo}** (Diapositiva {diapo})")
-                elif categoria == "video":
-                    inicio = float(fields.get("start_time", 0))
-                    minutos = int(inicio // 60)
-                    segundos = int(inicio % 60)
-                    fuentes_visuales.append(f"🎬 **{archivo}** (Minuto {minutos}:{segundos:02d})")
-                else:
-                    fuentes_visuales.append(f"📝 **{archivo}**")
 
-            # 4.3 Generar respuesta con OpenAI
-            prompt = f"""Usa la siguiente información de contexto para responder la pregunta del usuario de forma clara y amable. 
+@observe(name="rag-query")
+def rag_query(user_query):
+    hits = search_pinecone(user_query)
+
+    context = ""
+    fuentes_visuales = []
+    for i, h in enumerate(hits):
+        fields = h.get("fields", {})
+        texto = fields.get("chunk_text", "").strip()
+        categoria = fields.get("category", "general")
+        archivo = fields.get("source_file", "Documento desconocido")
+        context += f"--- Fragmento {i+1} ---\n{texto}\n\n"
+        if categoria == "presentacion":
+            diapo = int(fields.get("slide_number", 0))
+            fuentes_visuales.append(f"📄 **{archivo}** (Diapositiva {diapo})")
+        elif categoria == "video":
+            inicio = float(fields.get("start_time", 0))
+            minutos = int(inicio // 60)
+            segundos = int(inicio % 60)
+            fuentes_visuales.append(f"🎬 **{archivo}** (Minuto {minutos}:{segundos:02d})")
+        else:
+            fuentes_visuales.append(f"📝 **{archivo}**")
+
+    prompt = f"""Usa la siguiente información de contexto para responder la pregunta del usuario de forma clara y amable.
             Si la respuesta no está en el contexto, indícalo claramente y no inventes información.
 
             Contexto:
@@ -157,33 +124,48 @@ if user_query:
 
             Pregunta: {user_query}
             """
+    messages = [
+        {"role": "system", "content": "Eres un asistente experto que ayuda a los usuarios a encontrar información en una base de datos documental."},
+        {"role": "user", "content": prompt}
+    ]
 
-            # Usamos la sintaxis correcta de chat.completions y el modelo gpt-4o-mini (más rápido, barato y capaz)
-            messages = [
-                {"role": "system", "content": "Eres un asistente experto que ayuda a los usuarios a encontrar información en una base de datos documental."},
-                {"role": "user", "content": prompt}
-            ]
-            generation = trace.generation(
-                name="openai-completion",
-                model="gpt-4o-mini",
-                input=messages,
-            )
-            response = client.chat.completions.create(model="gpt-4o-mini", messages=messages)
-            answer = response.choices[0].message.content
-            generation.end(
-                output=answer,
-                usage={"input": response.usage.prompt_tokens, "output": response.usage.completion_tokens},
-            )
-            trace.update(output=answer)
-            
-            # 4.4 Mostrar la respuesta y las fuentes
+    answer = generate_answer(messages)
+    get_client().update_current_span(output=answer)
+    return hits, fuentes_visuales, answer
+
+
+# --- 4. GESTIÓN DEL HISTORIAL DE CHAT ---
+if "messages" not in st.session_state:
+    st.session_state.messages = []
+
+for message in st.session_state.messages:
+    with st.chat_message(message["role"]):
+        st.markdown(message["content"])
+
+# --- 5. LÓGICA DE BÚSQUEDA Y RESPUESTA ---
+user_query = st.chat_input("Escribe tu pregunta aquí (ej. Explícame qué es Dr. Baumann)...")
+
+if user_query:
+    with st.chat_message("user"):
+        st.markdown(user_query)
+    st.session_state.messages.append({"role": "user", "content": user_query})
+
+    with st.chat_message("assistant"):
+        with st.spinner("Buscando en la base de conocimiento..."):
+            with propagate_attributes(
+                user_id=st.session_state.get("name", "anonymous"),
+                session_id=st.session_state.get("username", "unknown"),
+            ):
+                hits, fuentes_visuales, answer = rag_query(user_query)
+
+            if not hits:
+                st.warning("No he encontrado información relevante en mis documentos para responder a esto.")
+                st.stop()
+
             st.markdown(answer)
-            
-            # Usamos un 'expander' (acordeón) para que las fuentes no saturen la pantalla
+
             with st.expander("📚 Ver fuentes consultadas"):
-                # Usamos set() para eliminar fuentes duplicadas si dos chunks vienen del mismo sitio
                 for fuente in set(fuentes_visuales):
                     st.markdown(f"- {fuente}")
-            
-            # Guardar la respuesta (sin las fuentes) en el historial
+
             st.session_state.messages.append({"role": "assistant", "content": answer})
