@@ -5,7 +5,8 @@ import streamlit as st
 import streamlit_authenticator as stauth
 from dotenv import load_dotenv
 from pinecone import Pinecone
-from openai import OpenAI
+from langfuse.openai import OpenAI
+from langfuse import Langfuse
 
 load_dotenv()
 
@@ -67,6 +68,10 @@ pc = Pinecone(api_key=os.environ["PINECONE_API_KEY"])
 index = pc.Index(host=os.environ["PINECONE_INDEX_HOST"])
 client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
 
+if "langfuse" not in st.session_state:
+    st.session_state.langfuse = Langfuse()
+langfuse = st.session_state.langfuse
+
 
 # --- 3. GESTIÓN DEL HISTORIAL DE CHAT ---
 if "messages" not in st.session_state:
@@ -82,6 +87,13 @@ for message in st.session_state.messages:
 user_query = st.chat_input("Escribe tu pregunta aquí (ej. Explícame qué es Dr. Baumann)...")
 
 if user_query:
+    trace = langfuse.trace(
+        name="rag-query",
+        input=user_query,
+        user_id=st.session_state.get("name", "anonymous"),
+        session_id=st.session_state.get("username", "unknown"),
+    )
+
     # Mostrar la pregunta del usuario en la interfaz y guardarla en el historial
     with st.chat_message("user"):
         st.markdown(user_query)
@@ -92,16 +104,20 @@ if user_query:
         with st.spinner("Buscando en la base de conocimiento..."):
             
             # 4.1 Búsqueda en Pinecone (Solicitando también los metadatos que creamos)
+            pinecone_span = trace.span(
+                name="pinecone-search",
+                input={"query": user_query, "namespace": "example-namespace", "top_k": 4},
+            )
             results = index.search(
-                namespace="example-namespace", 
+                namespace="example-namespace",
                 query={
-                    "inputs": {"text": user_query}, 
+                    "inputs": {"text": user_query},
                     "top_k": 4
                 },
                 fields=["category", "chunk_text", "source_file", "slide_number", "start_time"]
             )
-            
             hits = results.get("result", {}).get("hits", [])
+            pinecone_span.end(output={"hit_count": len(hits)})
             
             if not hits:
                 st.warning("No he encontrado información relevante en mis documentos para responder a esto.")
@@ -148,10 +164,12 @@ if user_query:
                 messages=[
                     {"role": "system", "content": "Eres un asistente experto que ayuda a los usuarios a encontrar información en una base de datos documental."},
                     {"role": "user", "content": prompt}
-                ]
+                ],
+                langfuse_observation_id=trace.id,
             )
-            
+
             answer = response.choices[0].message.content
+            trace.update(output=answer)
             
             # 4.4 Mostrar la respuesta y las fuentes
             st.markdown(answer)

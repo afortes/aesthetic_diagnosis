@@ -24,7 +24,7 @@ steps:
       - '--region=europe-west1'
       - '--platform=managed'
       - '--service-account=search-runtime-sa@aesthetic-diagnosis.iam.gserviceaccount.com'
-      - '--set-secrets=PINECONE_API_KEY=PINECONE_API_KEY:latest,PINECONE_INDEX_HOST=PINECONE_INDEX_HOST:latest,OPENAI_API_KEY=OPENAI_API_KEY:latest,/run/secrets/CREDENTIALS_YAML=CREDENTIALS_YAML:latest'
+      - '--set-secrets=PINECONE_API_KEY=PINECONE_API_KEY:latest,PINECONE_INDEX_HOST=PINECONE_INDEX_HOST:latest,OPENAI_API_KEY=OPENAI_API_KEY:latest,/run/secrets/CREDENTIALS_YAML=CREDENTIALS_YAML:latest,LANGFUSE_PUBLIC_KEY=LANGFUSE_PUBLIC_KEY:latest,LANGFUSE_SECRET_KEY=LANGFUSE_SECRET_KEY:latest'
 
 
 images:

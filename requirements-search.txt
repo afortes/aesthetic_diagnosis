@@ -4,3 +4,4 @@ pinecone==8.1.2
 openai==2.32.0
 python-dotenv==1.2.2
 pyyaml==6.0.3
+langfuse==2.58.2
