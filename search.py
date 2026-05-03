@@ -5,7 +5,7 @@ import streamlit as st
 import streamlit_authenticator as stauth
 from dotenv import load_dotenv
 from pinecone import Pinecone
-from langfuse.openai import OpenAI
+from openai import OpenAI
 from langfuse import Langfuse
 
 load_dotenv()
@@ -159,16 +159,21 @@ if user_query:
             """
 
             # Usamos la sintaxis correcta de chat.completions y el modelo gpt-4o-mini (más rápido, barato y capaz)
-            response = client.chat.completions.create(
+            messages = [
+                {"role": "system", "content": "Eres un asistente experto que ayuda a los usuarios a encontrar información en una base de datos documental."},
+                {"role": "user", "content": prompt}
+            ]
+            generation = trace.generation(
+                name="openai-completion",
                 model="gpt-4o-mini",
-                messages=[
-                    {"role": "system", "content": "Eres un asistente experto que ayuda a los usuarios a encontrar información en una base de datos documental."},
-                    {"role": "user", "content": prompt}
-                ],
-                langfuse_observation_id=trace.id,
+                input=messages,
             )
-
+            response = client.chat.completions.create(model="gpt-4o-mini", messages=messages)
             answer = response.choices[0].message.content
+            generation.end(
+                output=answer,
+                usage={"input": response.usage.prompt_tokens, "output": response.usage.completion_tokens},
+            )
             trace.update(output=answer)
             
             # 4.4 Mostrar la respuesta y las fuentes
