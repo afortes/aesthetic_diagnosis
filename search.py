@@ -77,8 +77,12 @@ def search_pinecone(query):
         query={"inputs": {"text": query}, "top_k": 4},
         fields=["category", "chunk_text", "source_file", "slide_number", "start_time"]
     )
-    hits = results.get("result", {}).get("hits", [])
-    get_client().update_current_span(output={"hit_count": len(hits)})
+    raw_hits = results.get("result", {}).get("hits", [])
+    hits = [h.to_dict() for h in raw_hits]
+    get_client().update_current_span(output={
+        "hit_count": len(hits),
+        "hits": [{"id": h.get("id"), "score": h.get("score"), "source_file": h.get("fields", {}).get("source_file"), "category": h.get("fields", {}).get("category")} for h in hits],
+    })
     return hits
 
 
